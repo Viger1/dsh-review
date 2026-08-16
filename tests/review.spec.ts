@@ -4,7 +4,7 @@ import { finderPrompt, renderOutcome, runReview, verifierPrompt, type RunChild }
 import { asFindings, asVerdict, type Finding } from '../src/schema.js'
 
 const lens = BUILT_IN_LENSES[0]
-const plan = { target: 'src/a.ts', lenses: [lens], verifiersPerFinding: 1, maxFindings: 12 }
+const plan = { target: 'src/a.ts', lenses: [lens], verifiersPerFinding: 1, maxFindings: 12, dedupeThreshold: 0.5 }
 
 function finding(overrides: Partial<Finding> = {}): Finding {
   return {
@@ -90,13 +90,28 @@ describe('runReview', () => {
     expect(outcome.confirmed).toHaveLength(1)
   })
 
-  it('runs one finder per lens and one verifier per finding', async () => {
-    const { run, calls } = scripted({ find: () => ({ findings: [finding(), finding({ title: 'second' })] }) })
-    await runReview({ ...plan, lenses: BUILT_IN_LENSES, verifiersPerFinding: 2 }, run)
-    const finders = calls.filter(c => c.label.startsWith('find:'))
-    const verifiers = calls.filter(c => c.label.startsWith('verify:'))
-    expect(finders).toHaveLength(BUILT_IN_LENSES.length)
-    expect(verifiers).toHaveLength(BUILT_IN_LENSES.length * 2 * 2)
+  it('runs one finder per lens', async () => {
+    const { run, calls } = scripted({ find: label => ({ findings: [finding({ title: `only ${label}` })] }) })
+    await runReview({ ...plan, lenses: BUILT_IN_LENSES }, run)
+    expect(calls.filter(c => c.label.startsWith('find:'))).toHaveLength(BUILT_IN_LENSES.length)
+  })
+
+  // Every lens reporting the same two defects must cost two verifications,
+  // not one per lens per defect: deduplication is what makes the fan-out
+  // affordable and the report one entry per defect.
+  it('verifies each distinct defect once however many lenses reported it', async () => {
+    const { run, calls } = scripted({ find: () => ({ findings: [finding(), finding({ title: 'coupon lookup returns undefined' })] }) })
+    const outcome = await runReview({ ...plan, lenses: BUILT_IN_LENSES, verifiersPerFinding: 2 }, run)
+    expect(outcome.found).toBe(BUILT_IN_LENSES.length * 2)
+    expect(outcome.merged).toBe(BUILT_IN_LENSES.length * 2 - 2)
+    expect(outcome.confirmed).toHaveLength(2)
+    expect(calls.filter(c => c.label.startsWith('verify:'))).toHaveLength(2 * 2)
+  })
+
+  it('attributes a merged defect to every lens that reported it', async () => {
+    const { run } = scripted({ find: () => ({ findings: [finding()] }) })
+    const outcome = await runReview({ ...plan, lenses: BUILT_IN_LENSES }, run)
+    expect(outcome.confirmed[0].lens).toBe(BUILT_IN_LENSES.map(l => l.key).join('+'))
   })
 
   it('verifies the most severe findings first and reports what the budget dropped', async () => {
@@ -132,7 +147,7 @@ describe('runReview', () => {
   it('reports a clean review plainly', async () => {
     const { run } = scripted({})
     const outcome = await runReview(plan, run)
-    expect(outcome).toMatchObject({ confirmed: [], refuted: [], found: 0, dropped: 0, failedLenses: [] })
+    expect(outcome).toMatchObject({ confirmed: [], refuted: [], found: 0, merged: 0, dropped: 0, failedLenses: [] })
     expect(renderOutcome(outcome)).toMatch(/No confirmed defects/)
   })
 })
@@ -161,6 +176,7 @@ describe('renderOutcome', () => {
       confirmed: [{ ...finding({ line: 7, suggestedFix: 'use <' }), lens: 'correctness', verification: 'reproduced' }],
       refuted: ['a refuted claim'],
       found: 2,
+      merged: 0,
       dropped: 3,
       failedLenses: ['security'],
     })

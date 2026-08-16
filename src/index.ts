@@ -36,6 +36,11 @@ export interface Config {
   verifiersPerFinding: number
   /** Upper bound on findings carried into verification. */
   maxFindings: number
+  /**
+   * Title similarity (0-1) required to merge two findings on different lines
+   * of one file as the same defect. Lower merges more aggressively.
+   */
+  dedupeThreshold: number
   /** Delegation-depth cap for review children. */
   maxDepth: number
   /** Register the bundled `adversarial-review` skill when the skill seam is composed. */
@@ -48,6 +53,7 @@ export const Config: z<Config> = z.object({
   lenses: z.array(z.string()).default([]),
   verifiersPerFinding: z.number().default(1),
   maxFindings: z.number().default(12),
+  dedupeThreshold: z.number().default(0.5),
   maxDepth: z.number().default(2),
   registerSkill: z.boolean().default(true),
 })
@@ -76,6 +82,9 @@ export function apply(ctx: Context, config: Config): void {
   }
   if (!Number.isInteger(config.maxFindings) || config.maxFindings < 1) {
     throw new Error(`dsh-review config maxFindings must be a positive integer, got ${config.maxFindings}`)
+  }
+  if (!(config.dedupeThreshold >= 0 && config.dedupeThreshold <= 1)) {
+    throw new Error(`dsh-review config dedupeThreshold must be between 0 and 1, got ${config.dedupeThreshold}`)
   }
   // Fail loud at load on an unknown lens rather than at the first review.
   const lenses = selectLenses(config.lenses)
@@ -139,6 +148,7 @@ export function apply(ctx: Context, config: Config): void {
           },
           refuted: { type: 'array', required: true, items: { type: 'string' } },
           found: { type: 'integer', required: true },
+          merged: { type: 'integer', required: true },
           dropped: { type: 'integer', required: true },
           failedLenses: { type: 'array', required: true, items: { type: 'string' } },
         },
@@ -179,6 +189,7 @@ export function apply(ctx: Context, config: Config): void {
         lenses: requested,
         verifiersPerFinding: config.verifiersPerFinding,
         maxFindings: config.maxFindings,
+        dedupeThreshold: config.dedupeThreshold,
       }, runChild)
     },
     presentCall: args => ({

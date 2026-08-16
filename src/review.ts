@@ -10,6 +10,7 @@
  * @module dsh-review/review
  */
 
+import { dedupeFindings, type LensFinding } from './dedupe.js'
 import type { Lens } from './lenses.js'
 import {
   asFindings,
@@ -40,6 +41,11 @@ export interface ReviewPlan {
   verifiersPerFinding: number
   /** Upper bound on findings carried into verification. */
   maxFindings: number
+  /**
+   * Title similarity required to merge two findings on different lines of one
+   * file. Findings anchored to the same line merge on any shared content.
+   */
+  dedupeThreshold: number
 }
 
 /** The outcome of one review. */
@@ -48,8 +54,10 @@ export interface ReviewOutcome {
   confirmed: ConfirmedFinding[]
   /** Titles of findings a verifier refuted, so the user can see what was filtered. */
   refuted: string[]
-  /** How many findings the finders reported before verification. */
+  /** How many findings the finders reported before deduplication. */
   found: number
+  /** How many raw findings were merged into another as the same defect. */
+  merged: number
   /** How many findings were dropped without verification by `maxFindings`. */
   dropped: number
   /** Lens keys whose finder failed to produce a usable result. */
@@ -132,15 +140,19 @@ export async function runReview(plan: ReviewPlan, runChild: RunChild): Promise<R
     }
   }))
 
-  const all = perLens.flat()
+  const all: LensFinding[] = perLens.flat()
+  // Independent lenses report one defect several ways; merging before
+  // verification keeps the report one entry per defect and removes the
+  // verifier calls the duplicates would each have cost.
+  const groups = dedupeFindings(all, plan.dedupeThreshold)
   // Verify the worst first so a budget cut drops the least important claims.
   const rank = { critical: 0, major: 1, minor: 2 }
-  const ordered = [...all].sort((a, b) => rank[a.finding.severity] - rank[b.finding.severity])
+  const ordered = [...groups].sort((a, b) => rank[a.finding.severity] - rank[b.finding.severity])
   const selected = ordered.slice(0, plan.maxFindings)
 
   const confirmed: ConfirmedFinding[] = []
   const refuted: string[] = []
-  await Promise.all(selected.map(async ({ finding, lens }) => {
+  await Promise.all(selected.map(async ({ finding, lenses }) => {
     const verdicts = await Promise.all(Array.from({ length: plan.verifiersPerFinding }, async (_unused, index) => {
       try {
         return asVerdict(await runChild({
@@ -154,7 +166,7 @@ export async function runReview(plan: ReviewPlan, runChild: RunChild): Promise<R
       }
     }))
     if (verdicts.every(verdict => verdict.confirmed)) {
-      confirmed.push({ ...finding, lens, verification: verdicts[0].reasoning })
+      confirmed.push({ ...finding, lens: lenses.join('+'), verification: verdicts[0].reasoning })
     } else {
       refuted.push(finding.title)
     }
@@ -165,6 +177,7 @@ export async function runReview(plan: ReviewPlan, runChild: RunChild): Promise<R
     confirmed,
     refuted,
     found: all.length,
+    merged: all.length - groups.length,
     dropped: ordered.length - selected.length,
     failedLenses,
   }
@@ -180,7 +193,8 @@ export function renderOutcome(outcome: ReviewOutcome): string {
   lines.push(
     outcome.confirmed.length === 0
       ? `No confirmed defects. ${outcome.found} finding(s) reported, none survived verification.`
-      : `${outcome.confirmed.length} confirmed defect(s) out of ${outcome.found} reported.`,
+      : `${outcome.confirmed.length} confirmed defect(s) out of ${outcome.found} reported`
+        + `${outcome.merged > 0 ? ` (${outcome.merged} duplicate report(s) merged)` : ''}.`,
   )
   for (const finding of outcome.confirmed) {
     lines.push(
