@@ -1,0 +1,205 @@
+import { describe, expect, it } from 'vitest'
+import { BUILT_IN_LENSES, selectLenses } from '../src/lenses.js'
+import { finderPrompt, renderOutcome, runReview, verifierPrompt, type RunChild } from '../src/review.js'
+import { asFindings, asVerdict, type Finding } from '../src/schema.js'
+
+const lens = BUILT_IN_LENSES[0]
+const plan = { target: 'src/a.ts', lenses: [lens], verifiersPerFinding: 1, maxFindings: 12 }
+
+function finding(overrides: Partial<Finding> = {}): Finding {
+  return {
+    file: 'src/a.ts',
+    title: 'off-by-one in the loop bound',
+    detail: 'The loop uses <= over a zero-based index.',
+    failureScenario: 'A 3-element array reads index 3 and returns undefined.',
+    severity: 'major',
+    ...overrides,
+  }
+}
+
+/**
+ * A child runner driven by scripted responses, keyed by label prefix.
+ */
+function scripted(responses: {
+  find?: (label: string) => unknown
+  verify?: (prompt: string) => unknown
+}): { run: RunChild; calls: { label: string; prompt: string }[] } {
+  const calls: { label: string; prompt: string }[] = []
+  const run: RunChild = ({ label, prompt }) => {
+    calls.push({ label, prompt })
+    if (label.startsWith('find:')) {
+      const value = responses.find?.(label) ?? { findings: [] }
+      return value instanceof Error ? Promise.reject(value) : Promise.resolve(value)
+    }
+    const value = responses.verify?.(prompt) ?? { confirmed: true, reasoning: 'could not refute' }
+    return value instanceof Error ? Promise.reject(value) : Promise.resolve(value)
+  }
+  return { run, calls }
+}
+
+describe('runReview', () => {
+  it('reports a finding that survives verification', async () => {
+    const { run } = scripted({ find: () => ({ findings: [finding()] }) })
+    const outcome = await runReview(plan, run)
+    expect(outcome.confirmed).toHaveLength(1)
+    expect(outcome.confirmed[0]).toMatchObject({ title: finding().title, lens: lens.key })
+    expect(outcome.confirmed[0].verification).toBe('could not refute')
+    expect(outcome.refuted).toEqual([])
+    expect(outcome.found).toBe(1)
+  })
+
+  it('drops a finding the verifier refutes', async () => {
+    const { run } = scripted({
+      find: () => ({ findings: [finding()] }),
+      verify: () => ({ confirmed: false, reasoning: 'the loop bound is exclusive; misread' }),
+    })
+    const outcome = await runReview(plan, run)
+    expect(outcome.confirmed).toEqual([])
+    expect(outcome.refuted).toEqual([finding().title])
+    expect(outcome.found).toBe(1)
+  })
+
+  it('requires every verifier to confirm', async () => {
+    let call = 0
+    const { run } = scripted({
+      find: () => ({ findings: [finding()] }),
+      verify: () => (++call === 2 ? { confirmed: false, reasoning: 'refuted' } : { confirmed: true, reasoning: 'ok' }),
+    })
+    const outcome = await runReview({ ...plan, verifiersPerFinding: 3 }, run)
+    expect(outcome.confirmed).toEqual([])
+    expect(outcome.refuted).toHaveLength(1)
+  })
+
+  it('drops a finding whose verifier failed rather than reporting it unverified', async () => {
+    const { run } = scripted({
+      find: () => ({ findings: [finding()] }),
+      verify: () => new Error('child crashed'),
+    })
+    const outcome = await runReview(plan, run)
+    expect(outcome.confirmed).toEqual([])
+    expect(outcome.refuted).toHaveLength(1)
+  })
+
+  it('records a failed lens as a coverage gap without failing the review', async () => {
+    const [first, second] = BUILT_IN_LENSES
+    const { run } = scripted({
+      find: label => label === `find:${first.key}` ? new Error('finder died') : { findings: [finding()] },
+    })
+    const outcome = await runReview({ ...plan, lenses: [first, second] }, run)
+    expect(outcome.failedLenses).toEqual([first.key])
+    expect(outcome.confirmed).toHaveLength(1)
+  })
+
+  it('runs one finder per lens and one verifier per finding', async () => {
+    const { run, calls } = scripted({ find: () => ({ findings: [finding(), finding({ title: 'second' })] }) })
+    await runReview({ ...plan, lenses: BUILT_IN_LENSES, verifiersPerFinding: 2 }, run)
+    const finders = calls.filter(c => c.label.startsWith('find:'))
+    const verifiers = calls.filter(c => c.label.startsWith('verify:'))
+    expect(finders).toHaveLength(BUILT_IN_LENSES.length)
+    expect(verifiers).toHaveLength(BUILT_IN_LENSES.length * 2 * 2)
+  })
+
+  it('verifies the most severe findings first and reports what the budget dropped', async () => {
+    const { run, calls } = scripted({
+      find: () => ({
+        findings: [
+          finding({ title: 'minor one', severity: 'minor' }),
+          finding({ title: 'critical one', severity: 'critical' }),
+          finding({ title: 'major one', severity: 'major' }),
+        ],
+      }),
+    })
+    const outcome = await runReview({ ...plan, maxFindings: 2 }, run)
+    expect(outcome.found).toBe(3)
+    expect(outcome.dropped).toBe(1)
+    expect(outcome.confirmed.map(f => f.title)).toEqual(['critical one', 'major one'])
+    expect(calls.filter(c => c.label.startsWith('verify:'))).toHaveLength(2)
+  })
+
+  it('sorts confirmed findings by severity', async () => {
+    const { run } = scripted({
+      find: () => ({
+        findings: [
+          finding({ title: 'minor', severity: 'minor' }),
+          finding({ title: 'critical', severity: 'critical' }),
+        ],
+      }),
+    })
+    const outcome = await runReview(plan, run)
+    expect(outcome.confirmed.map(f => f.severity)).toEqual(['critical', 'minor'])
+  })
+
+  it('reports a clean review plainly', async () => {
+    const { run } = scripted({})
+    const outcome = await runReview(plan, run)
+    expect(outcome).toMatchObject({ confirmed: [], refuted: [], found: 0, dropped: 0, failedLenses: [] })
+    expect(renderOutcome(outcome)).toMatch(/No confirmed defects/)
+  })
+})
+
+describe('prompts', () => {
+  it('gives the finder its lens, the target, and the refutation warning', () => {
+    const prompt = finderPrompt(lens, 'src/a.ts and src/b.ts')
+    expect(prompt).toContain(lens.instructions)
+    expect(prompt).toContain('src/a.ts and src/b.ts')
+    expect(prompt).toMatch(/REFUTE/)
+    expect(prompt).toMatch(/Reporting nothing is a valid/)
+  })
+
+  it('tells the verifier to attack the claim and default to refuting', () => {
+    const prompt = verifierPrompt(finding({ line: 42, suggestedFix: 'use <' }), 'src/a.ts')
+    expect(prompt).toMatch(/REFUTE it, not to agree/)
+    expect(prompt).toContain('src/a.ts:42')
+    expect(prompt).toContain('use <')
+    expect(prompt).toMatch(/Default to `confirmed: false`/)
+  })
+})
+
+describe('renderOutcome', () => {
+  it('renders findings with location, failure, and fix, and lists refuted titles', () => {
+    const text = renderOutcome({
+      confirmed: [{ ...finding({ line: 7, suggestedFix: 'use <' }), lens: 'correctness', verification: 'reproduced' }],
+      refuted: ['a refuted claim'],
+      found: 2,
+      dropped: 3,
+      failedLenses: ['security'],
+    })
+    expect(text).toMatch(/1 confirmed defect\(s\) out of 2 reported/)
+    expect(text).toContain('src/a.ts:7')
+    expect(text).toContain('Failure: ')
+    expect(text).toContain('Fix: use <')
+    expect(text).toMatch(/Refuted by verification \(do not act on these\): a refuted claim/)
+    expect(text).toMatch(/3 lower-severity finding\(s\)/)
+    expect(text).toMatch(/Lenses that failed to run \(coverage gap\): security/)
+  })
+})
+
+describe('selectLenses', () => {
+  it('defaults to every built-in lens', () => {
+    expect(selectLenses([])).toEqual(BUILT_IN_LENSES)
+  })
+
+  it('selects a subset in built-in order', () => {
+    const keys = [BUILT_IN_LENSES[2].key, BUILT_IN_LENSES[0].key]
+    expect(selectLenses(keys).map(l => l.key)).toEqual([BUILT_IN_LENSES[0].key, BUILT_IN_LENSES[2].key])
+  })
+
+  it('fails loud on an unknown lens and names the available ones', () => {
+    expect(() => selectLenses(['typos'])).toThrow(/unknown review lens "typos"/)
+    expect(() => selectLenses(['typos'])).toThrow(/available: correctness/)
+  })
+})
+
+describe('structured-output narrowing', () => {
+  it('treats a missing or malformed finder result as no findings', () => {
+    expect(asFindings(undefined)).toEqual([])
+    expect(asFindings({})).toEqual([])
+    expect(asFindings({ findings: 'nope' })).toEqual([])
+  })
+
+  it('refutes when a verifier produced no usable verdict', () => {
+    expect(asVerdict(undefined).confirmed).toBe(false)
+    expect(asVerdict({ confirmed: 'yes' }).confirmed).toBe(false)
+    expect(asVerdict({ confirmed: true, reasoning: 'ok' })).toEqual({ confirmed: true, reasoning: 'ok' })
+  })
+})

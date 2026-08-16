@@ -1,0 +1,20 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: corepack enable
+      # --ignore-scripts: a PR must not run install-time scripts on CI.
+      - run: corepack pnpm install --frozen-lockfile --ignore-scripts
+      - run: corepack pnpm run build
+      - run: corepack pnpm test
