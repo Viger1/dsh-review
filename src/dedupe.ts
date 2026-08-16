@@ -74,7 +74,10 @@ export function isSameDefect(a: Finding, b: Finding, titleThreshold: number): bo
   if (a.file !== b.file) return false
   const overlap = similarity(tokens(a.title), tokens(b.title))
   if (a.line !== undefined && b.line !== undefined && a.line === b.line) return overlap > 0
-  return overlap >= titleThreshold
+  // Some shared content is required whatever the threshold: at 0 a bare
+  // `overlap >= titleThreshold` would merge every finding in a file, silently
+  // discarding distinct defects as duplicates.
+  return overlap > 0 && overlap >= titleThreshold
 }
 
 /**

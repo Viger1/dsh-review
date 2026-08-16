@@ -10,6 +10,7 @@
  * @module dsh-review/review
  */
 
+import { createLimiter } from './concurrency.js'
 import { dedupeFindings, type LensFinding } from './dedupe.js'
 import type { Lens } from './lenses.js'
 import {
@@ -41,6 +42,8 @@ export interface ReviewPlan {
   verifiersPerFinding: number
   /** Upper bound on findings carried into verification. */
   maxFindings: number
+  /** Maximum child agents running at once across the whole review. */
+  maxConcurrentChildren: number
   /**
    * Title similarity required to merge two findings on different lines of one
    * file. Findings anchored to the same line merge on any shared content.
@@ -123,10 +126,14 @@ export function verifierPrompt(finding: Finding, target: string): string {
  * @returns the confirmed findings and what was filtered out.
  */
 export async function runReview(plan: ReviewPlan, runChild: RunChild): Promise<ReviewOutcome> {
+  // Every child start goes through one limiter, so a large budget queues
+  // instead of firing hundreds of agents at once.
+  const limit = createLimiter(plan.maxConcurrentChildren)
+  const startChild: RunChild = spec => limit(() => runChild(spec))
   const failedLenses: string[] = []
   const perLens = await Promise.all(plan.lenses.map(async (lens) => {
     try {
-      const result = await runChild({
+      const result = await startChild({
         label: `find:${lens.key}`,
         prompt: finderPrompt(lens, plan.target),
         schema: FINDINGS_SCHEMA,
@@ -155,7 +162,7 @@ export async function runReview(plan: ReviewPlan, runChild: RunChild): Promise<R
   await Promise.all(selected.map(async ({ finding, lenses }) => {
     const verdicts = await Promise.all(Array.from({ length: plan.verifiersPerFinding }, async (_unused, index) => {
       try {
-        return asVerdict(await runChild({
+        return asVerdict(await startChild({
           label: `verify:${finding.file}`,
           prompt: verifierPrompt(finding, plan.target)
             + (index === 0 ? '' : '\n\nOther verifiers are ruling on this claim independently; reach your own conclusion.'),

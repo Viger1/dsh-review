@@ -43,6 +43,8 @@ export interface Config {
   dedupeThreshold: number
   /** Delegation-depth cap for review children. */
   maxDepth: number
+  /** Maximum child agents running at once across one review. */
+  maxConcurrentChildren: number
   /** Register the bundled `adversarial-review` skill when the skill seam is composed. */
   registerSkill: boolean
 }
@@ -55,6 +57,7 @@ export const Config: z<Config> = z.object({
   maxFindings: z.number().default(12),
   dedupeThreshold: z.number().default(0.5),
   maxDepth: z.number().default(2),
+  maxConcurrentChildren: z.number().default(8),
   registerSkill: z.boolean().default(true),
 })
 
@@ -77,11 +80,16 @@ interface SubagentsLike {
  * @param config - deployment configuration.
  */
 export function apply(ctx: Context, config: Config): void {
-  if (!Number.isInteger(config.verifiersPerFinding) || config.verifiersPerFinding < 1) {
-    throw new Error(`dsh-review config verifiersPerFinding must be a positive integer, got ${config.verifiersPerFinding}`)
+  // Misconfiguration fails at load: an invalid value reaching the subagent
+  // seam would surface as every lens failing, which reads like a clean review
+  // that found nothing rather than a broken deployment.
+  for (const field of ['verifiersPerFinding', 'maxFindings', 'maxConcurrentChildren'] as const) {
+    if (!Number.isSafeInteger(config[field]) || config[field] < 1) {
+      throw new Error(`dsh-review config ${field} must be a positive integer, got ${config[field]}`)
+    }
   }
-  if (!Number.isInteger(config.maxFindings) || config.maxFindings < 1) {
-    throw new Error(`dsh-review config maxFindings must be a positive integer, got ${config.maxFindings}`)
+  if (!Number.isSafeInteger(config.maxDepth) || config.maxDepth < 0) {
+    throw new Error(`dsh-review config maxDepth must be a non-negative integer, got ${config.maxDepth}`)
   }
   if (!(config.dedupeThreshold >= 0 && config.dedupeThreshold <= 1)) {
     throw new Error(`dsh-review config dedupeThreshold must be between 0 and 1, got ${config.dedupeThreshold}`)
@@ -190,6 +198,7 @@ export function apply(ctx: Context, config: Config): void {
         verifiersPerFinding: config.verifiersPerFinding,
         maxFindings: config.maxFindings,
         dedupeThreshold: config.dedupeThreshold,
+        maxConcurrentChildren: config.maxConcurrentChildren,
       }, runChild)
     },
     presentCall: args => ({

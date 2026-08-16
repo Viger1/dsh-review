@@ -52,6 +52,7 @@ The bundled `adversarial-review` skill teaches the agent when a review is worth 
     lenses: []                # [] runs every built-in lens
     verifiersPerFinding: 1    # raise for a stricter panel; all must confirm
     maxFindings: 12           # verification budget, worst severities first
+    maxConcurrentChildren: 8  # cap on children running at once
     maxDepth: 2               # delegation-depth cap for review children
     registerSkill: true
 ```
@@ -63,6 +64,11 @@ Lenses: `correctness`, `lifecycle`, `contract`, `security`. Each is one child ag
 - **Failures are contained per child.** A finder that dies costs its lens and is reported as a coverage gap; a verifier that dies refutes its finding, because a claim nobody verified is exactly what this plugin exists not to print.
 - **Verification is unanimous.** With `verifiersPerFinding > 1`, one refutation is enough to drop a finding — the asymmetry is deliberate.
 - **The budget cuts the least severe.** Findings are verified worst-first, and anything cut is reported as dropped rather than silently omitted.
+- **Fan-out is bounded.** Every child start passes through one limiter, so a large budget queues instead of firing hundreds of agents at once — an overload would otherwise arrive disguised as a review that refuted everything.
+
+### Dogfooding
+
+`dsh-review` reviewed its own source and found three defects, which are fixed and pinned by tests: a zero `dedupeThreshold` merged every finding in a file (distinct defects silently discarded as duplicates), the verifier fan-out had no concurrency bound, and `maxDepth` was the one numeric config never validated at load. It also refuted two findings, one of which was a genuine false positive about a value the entry point already validates.
 
 ## Family
 

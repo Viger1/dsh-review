@@ -111,6 +111,26 @@ describe('dedupeFindings', () => {
     expect(dedupeFindings([], 0.5)).toEqual([])
   })
 
+  // dsh-review found this in its own source: `overlap >= 0` is always true,
+  // so a zero threshold merged every finding in a file and silently discarded
+  // distinct defects as duplicates.
+  it('still requires shared content at a threshold of 0', () => {
+    const groups = dedupeFindings(tagged([
+      { f: { line: 7, title: 'loop reads past the array end' }, lens: 'correctness' },
+      { f: { line: 16, title: 'coupon lookup returns undefined' }, lens: 'correctness' },
+      { f: { line: 22, title: 'unvalidated userId enables path traversal' }, lens: 'security' },
+    ]), 0)
+    expect(groups).toHaveLength(3)
+  })
+
+  it('merges overlapping titles at a threshold of 0', () => {
+    const groups = dedupeFindings(tagged([
+      { f: { line: 7, title: 'loop reads past the array end' }, lens: 'correctness' },
+      { f: { line: 9, title: 'loop bound off by one' }, lens: 'contract' },
+    ]), 0)
+    expect(groups).toHaveLength(1)
+  })
+
   it('merges nothing at a threshold of 1 unless the line matches', () => {
     const groups = dedupeFindings(tagged([
       { f: { line: 7, title: 'loop reads past the end' }, lens: 'correctness' },

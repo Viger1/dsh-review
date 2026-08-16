@@ -4,7 +4,7 @@ import { finderPrompt, renderOutcome, runReview, verifierPrompt, type RunChild }
 import { asFindings, asVerdict, type Finding } from '../src/schema.js'
 
 const lens = BUILT_IN_LENSES[0]
-const plan = { target: 'src/a.ts', lenses: [lens], verifiersPerFinding: 1, maxFindings: 12, dedupeThreshold: 0.5 }
+const plan = { target: 'src/a.ts', lenses: [lens], verifiersPerFinding: 1, maxFindings: 12, dedupeThreshold: 0.5, maxConcurrentChildren: 8 }
 
 function finding(overrides: Partial<Finding> = {}): Finding {
   return {
@@ -149,6 +149,22 @@ describe('runReview', () => {
     const outcome = await runReview(plan, run)
     expect(outcome).toMatchObject({ confirmed: [], refuted: [], found: 0, merged: 0, dropped: 0, failedLenses: [] })
     expect(renderOutcome(outcome)).toMatch(/No confirmed defects/)
+  })
+})
+
+describe('concurrency bound', () => {
+  it('never exceeds maxConcurrentChildren across finders and verifiers', async () => {
+    let active = 0
+    let peak = 0
+    const run: RunChild = async () => {
+      active += 1
+      peak = Math.max(peak, active)
+      await new Promise(resolve => setTimeout(resolve, 0))
+      active -= 1
+      return { findings: [finding()] }
+    }
+    await runReview({ ...plan, lenses: BUILT_IN_LENSES, verifiersPerFinding: 3, maxConcurrentChildren: 2 }, run)
+    expect(peak).toBeLessThanOrEqual(2)
   })
 })
 
