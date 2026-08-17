@@ -77,6 +77,7 @@ Lenses: `correctness`, `lifecycle`, `contract`, `security`. Each is one child ag
 | [dsh-preview](https://github.com/Viger1/dsh-preview) | 👁 Eyes — verify what it builds: open, read, screenshot, self-check |
 | [dsh-pilot](https://github.com/Viger1/dsh-pilot) | ✋ Hands — operate any page by accessibility refs, with a native permission model |
 | **dsh-review** (this repo) | 🔍 Judgement — find defects, then try to refute each one before reporting it |
+| [dsh-design](https://github.com/Viger1/dsh-design) | 🎨 Taste — constrain the choices, then measure whether the result kept them |
 
 ## License
 
