@@ -1,6 +1,6 @@
 {
   "name": "dsh-review",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Packaged multi-agent adversarial code review for DeepSeek Harness — one finder per lens in parallel, then a verifier per finding whose task is to refute it, so only confirmed defects are reported.",
   "type": "module",
   "main": "lib/index.js",
@@ -44,17 +44,20 @@
     "prepublishOnly": "npm run build",
     "test": "vitest run"
   },
-  "dependencies": {
-    "@deepseek-ai/dsh-skill": "^0.1.0-rc.5",
-    "@deepseek-ai/dsh-tools": "^0.1.0-rc.5",
-    "@deepseek-ai/schemastery": "^3.18.1",
-    "@deepseek-ai/dsh-subagent": "^0.1.0-rc.5"
-  },
+  "dependencies": {},
   "peerDependencies": {
-    "@deepseek-ai/cordis": "*"
+    "@deepseek-ai/cordis": "*",
+    "@deepseek-ai/dsh-skill": "*",
+    "@deepseek-ai/dsh-subagent": "*",
+    "@deepseek-ai/dsh-tools": "*",
+    "@deepseek-ai/schemastery": "*"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "^4.0.0-rc.7",
+    "@deepseek-ai/dsh-skill": "^0.1.0-rc.5",
+    "@deepseek-ai/dsh-subagent": "^0.1.0-rc.5",
+    "@deepseek-ai/dsh-tools": "^0.1.0-rc.5",
+    "@deepseek-ai/schemastery": "^3.18.1",
     "@types/node": "^26.2.0",
     "typescript": "^5.7.0",
     "vitest": "^4.1.10"
