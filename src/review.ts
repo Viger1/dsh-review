@@ -94,6 +94,12 @@ export interface ReviewOutcome {
   dropped: number
   /** Lens keys whose finder failed to produce a usable result. */
   failedLenses: string[]
+  /**
+   * Lens keys whose finder ran and returned nothing. Reported explicitly so a
+   * silent lens reads as "it looked and found nothing" rather than leaving the
+   * caller unable to tell coverage from absence.
+   */
+  cleanLenses: string[]
 }
 
 /**
@@ -160,6 +166,7 @@ export async function runReview(plan: ReviewPlan, runChild: RunChild): Promise<R
   const limit = createLimiter(plan.maxConcurrentChildren)
   const startChild: RunChild = spec => limit(() => runChild(spec))
   const failedLenses: string[] = []
+  const cleanLenses: string[] = []
   const perLens = await Promise.all(plan.lenses.map(async (lens) => {
     try {
       const result = await startChild({
@@ -167,7 +174,9 @@ export async function runReview(plan: ReviewPlan, runChild: RunChild): Promise<R
         prompt: finderPrompt(lens, plan.target),
         schema: FINDINGS_SCHEMA,
       })
-      return asFindings(result).map(finding => ({ finding, lens: lens.key }))
+      const findings = asFindings(result)
+      if (findings.length === 0) cleanLenses.push(lens.key)
+      return findings.map(finding => ({ finding, lens: lens.key }))
     } catch {
       // One lens failing is a coverage gap, reported as such rather than
       // failing the whole review.
@@ -216,6 +225,7 @@ export async function runReview(plan: ReviewPlan, runChild: RunChild): Promise<R
     merged: all.length - groups.length,
     dropped: ordered.length - selected.length,
     failedLenses,
+    cleanLenses,
   }
 }
 
@@ -248,8 +258,11 @@ export function renderOutcome(outcome: ReviewOutcome): string {
   if (outcome.dropped > 0) {
     lines.push('', `${outcome.dropped} lower-severity finding(s) exceeded maxFindings and were not verified.`)
   }
+  if (outcome.cleanLenses.length > 0) {
+    lines.push('', `Lenses that ran and found nothing: ${outcome.cleanLenses.join(', ')}.`)
+  }
   if (outcome.failedLenses.length > 0) {
-    lines.push('', `Lenses that failed to run (coverage gap): ${outcome.failedLenses.join(', ')}.`)
+    lines.push('', `Lenses that failed to run (coverage gap, NOT a clean result): ${outcome.failedLenses.join(', ')}.`)
   }
   return lines.join('\n')
 }

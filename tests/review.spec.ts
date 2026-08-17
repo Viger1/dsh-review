@@ -87,6 +87,8 @@ describe('runReview', () => {
     })
     const outcome = await runReview({ ...plan, lenses: [first, second] }, run)
     expect(outcome.failedLenses).toEqual([first.key])
+    // A failed lens must never be counted as a lens that found nothing.
+    expect(outcome.cleanLenses).not.toContain(first.key)
     expect(outcome.confirmed).toHaveLength(1)
   })
 
@@ -148,6 +150,7 @@ describe('runReview', () => {
     const { run } = scripted({})
     const outcome = await runReview(plan, run)
     expect(outcome).toMatchObject({ confirmed: [], refuted: [], found: 0, merged: 0, dropped: 0, failedLenses: [] })
+    expect(outcome.cleanLenses).toEqual([lens.key])
     expect(renderOutcome(outcome)).toMatch(/No confirmed defects/)
   })
 })
@@ -195,6 +198,7 @@ describe('renderOutcome', () => {
       merged: 0,
       dropped: 3,
       failedLenses: ['security'],
+      cleanLenses: ['lifecycle'],
     })
     expect(text).toMatch(/1 confirmed defect\(s\) out of 2 reported/)
     expect(text).toContain('src/a.ts:7')
@@ -202,7 +206,8 @@ describe('renderOutcome', () => {
     expect(text).toContain('Fix: use <')
     expect(text).toMatch(/Refuted by verification \(do not act on these\): a refuted claim/)
     expect(text).toMatch(/3 lower-severity finding\(s\)/)
-    expect(text).toMatch(/Lenses that failed to run \(coverage gap\): security/)
+    expect(text).toMatch(/Lenses that ran and found nothing: lifecycle/)
+    expect(text).toMatch(/Lenses that failed to run \(coverage gap, NOT a clean result\): security/)
   })
 })
 

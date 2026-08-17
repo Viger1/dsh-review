@@ -73,6 +73,7 @@ Lenses: `correctness`, `lifecycle`, `contract`, `security`. Each is one child ag
 
 ## Design notes
 
+- **Silence is reported, not implied.** A lens that ran and found nothing is listed as such, separately from one that failed — otherwise a caller cannot tell coverage from absence, which the plugin's own first quick run made obvious.
 - **Failures are contained per child.** A finder that dies costs its lens and is reported as a coverage gap; a verifier that dies refutes its finding, because a claim nobody verified is exactly what this plugin exists not to print.
 - **Verification is unanimous.** With `verifiersPerFinding > 1`, one refutation is enough to drop a finding — the asymmetry is deliberate.
 - **The budget cuts the least severe.** Findings are verified worst-first, and anything cut is reported as dropped rather than silently omitted.

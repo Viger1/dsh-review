@@ -171,6 +171,7 @@ export function apply(ctx: Context, config: Config): void {
           merged: { type: 'integer', required: true },
           dropped: { type: 'integer', required: true },
           failedLenses: { type: 'array', required: true, items: { type: 'string' } },
+          cleanLenses: { type: 'array', required: true, items: { type: 'string' } },
         },
       },
       render: (_args, value) => [{ type: 'text', text: renderOutcome(value) }],
