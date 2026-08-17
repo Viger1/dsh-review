@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { BUILT_IN_LENSES, selectLenses } from '../src/lenses.js'
-import { finderPrompt, renderOutcome, runReview, verifierPrompt, type RunChild } from '../src/review.js'
+import { applyDepth, finderPrompt, QUICK_LIMITS, renderOutcome, runReview, verifierPrompt, type RunChild } from '../src/review.js'
 import { asFindings, asVerdict, type Finding } from '../src/schema.js'
 
 const lens = BUILT_IN_LENSES[0]
@@ -233,5 +233,51 @@ describe('structured-output narrowing', () => {
     expect(asVerdict(undefined).confirmed).toBe(false)
     expect(asVerdict({ confirmed: 'yes' }).confirmed).toBe(false)
     expect(asVerdict({ confirmed: true, reasoning: 'ok' })).toEqual({ confirmed: true, reasoning: 'ok' })
+  })
+})
+
+describe('depth', () => {
+  const full = { ...plan, lenses: BUILT_IN_LENSES, maxFindings: 12, verifiersPerFinding: 3 }
+
+  it('leaves a full review exactly as configured', () => {
+    expect(applyDepth(full, 'full')).toEqual(full)
+  })
+
+  it('caps a quick review to fewer lenses, findings, and verifiers', () => {
+    const quick = applyDepth(full, 'quick')
+    expect(quick.lenses).toHaveLength(QUICK_LIMITS.maxLenses)
+    expect(quick.lenses).toEqual(BUILT_IN_LENSES.slice(0, QUICK_LIMITS.maxLenses))
+    expect(quick.maxFindings).toBe(QUICK_LIMITS.maxFindings)
+    expect(quick.verifiersPerFinding).toBe(QUICK_LIMITS.verifiersPerFinding)
+  })
+
+  it('never raises a deployment that is already cheaper than quick', () => {
+    const lean = { ...plan, lenses: [lens], maxFindings: 2, verifiersPerFinding: 1 }
+    const quick = applyDepth(lean, 'quick')
+    expect(quick.lenses).toHaveLength(1)
+    expect(quick.maxFindings).toBe(2)
+    expect(quick.verifiersPerFinding).toBe(1)
+  })
+
+  // Verification is the plugin's reason to exist; a cheaper review looks at
+  // less rather than reporting claims nobody tried to refute.
+  it('still verifies at quick depth', async () => {
+    const { run, calls } = scripted({
+      find: () => ({ findings: [finding()] }),
+      verify: () => ({ confirmed: false, reasoning: 'refuted' }),
+    })
+    const outcome = await runReview(applyDepth(full, 'quick'), run)
+    expect(calls.filter(c => c.label.startsWith('verify:')).length).toBeGreaterThan(0)
+    expect(outcome.confirmed).toEqual([])
+    expect(outcome.refuted).toHaveLength(1)
+  })
+
+  it('costs materially less than a full run on the same findings', async () => {
+    const findings = () => ({ findings: [finding(), finding({ title: 'coupon lookup returns undefined' })] })
+    const fullRun = scripted({ find: findings })
+    const quickRun = scripted({ find: findings })
+    await runReview(full, fullRun.run)
+    await runReview(applyDepth(full, 'quick'), quickRun.run)
+    expect(quickRun.calls.length).toBeLessThan(fullRun.calls.length / 2)
   })
 })

@@ -25,6 +25,13 @@ Omit `lenses` to run the deployment's default set. Narrow it when you already kn
 
 A review reporting nothing confirmed is a real result worth stating plainly. Do not manufacture concerns to fill the silence.
 
-## Cost
+## Cost, and choosing a depth
 
-Every lens is one child agent, and every finding gets its own verifier — a review is the most expensive tool in the session by a wide margin. Use it on work that warrants it, not on a typo fix, and prefer one well-described review over several vague ones.
+Every lens is one child agent, and every finding gets its own verifier — a review is the most expensive tool in the session by a wide margin, in both money and wall time. It is a pre-release audit, not something to run on every commit.
+
+- `depth: "quick"` — two lenses, four verified findings, one verifier. Use it for a routine look at a small change, or when you are unsure whether a full review is warranted.
+- default full depth — the deployment's configured panel. Use it before a release, for a change touching concurrency, permissions, or a protocol, and whenever the user asks for a review or an audit.
+
+Verification happens at both depths. If you need it cheaper still, narrow `lenses` to the risk you actually care about rather than asking for findings you will not verify.
+
+Prefer one well-described review over several vague ones: the target description decides what the finders read, and a vague target wastes the whole fan-out.

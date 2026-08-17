@@ -21,7 +21,7 @@ import {
 // Type-only: merges `subagents` onto Context so the injected service resolves.
 import type {} from '@deepseek-ai/dsh-subagent'
 import { BUILT_IN_LENSES, selectLenses } from './lenses.js'
-import { renderOutcome, runReview, type RunChild } from './review.js'
+import { applyDepth, QUICK_LIMITS, renderOutcome, runReview, type ReviewDepth, type RunChild } from './review.js'
 
 export const name = 'review'
 export const inject = ['tools', 'subagents']
@@ -110,9 +110,12 @@ export function apply(ctx: Context, config: Config): void {
       + 'adversarially: one finder per lens (correctness, lifecycle, contract, security) '
       + 'reports defects, and every finding gets its own verifier whose task is to refute '
       + 'it. Only findings that survive are reported, so the result is worth acting on '
-      + 'rather than triaging. Use before claiming non-trivial work is done, and when the '
-      + 'user asks for a review or an audit. Describe the target precisely — a diff, a set '
-      + 'of files, or a subsystem — because the children read the repository themselves.',
+      + 'rather than triaging. This is the most expensive tool in the session — every lens '
+      + 'and every finding is another agent — so use `depth: quick` for a routine check on '
+      + 'a small change and the default full depth for a pre-release audit or when the user '
+      + 'asks for one. Describe the target precisely: a diff, a set of files, or a '
+      + 'subsystem, plus what the change is meant to do, because the children read the '
+      + 'repository themselves and cannot infer intent.',
     // The children have their own budgets; this bounds the whole fan-out.
     timeoutMs: 1_800_000,
     parameters: {
@@ -128,6 +131,15 @@ export function apply(ctx: Context, config: Config): void {
         type: 'array',
         description: `Lens keys to run; omit for the deployment default. Available: ${BUILT_IN_LENSES.map(lens => lens.key).join(', ')}.`,
         items: { type: 'string' },
+      },
+      depth: {
+        type: 'string',
+        enum: ['quick', 'full'],
+        description:
+          `quick caps the run at ${QUICK_LIMITS.maxLenses} lenses, ${QUICK_LIMITS.maxFindings} verified findings, `
+          + `and ${QUICK_LIMITS.verifiersPerFinding} verifier — roughly a third of the cost, for a routine check on a `
+          + 'small change. full (the default) uses the deployment settings for a pre-release audit. Verification runs at '
+          + 'both depths; a cheaper review looks at less rather than trusting more.',
       },
     },
     output: {
@@ -192,14 +204,15 @@ export function apply(ctx: Context, config: Config): void {
         }
       }
       const requested = args.lenses === undefined || args.lenses.length === 0 ? lenses : selectLenses(args.lenses)
-      return runReview({
+      const plan = applyDepth({
         target: args.target,
         lenses: requested,
         verifiersPerFinding: config.verifiersPerFinding,
         maxFindings: config.maxFindings,
         dedupeThreshold: config.dedupeThreshold,
         maxConcurrentChildren: config.maxConcurrentChildren,
-      }, runChild)
+      }, (args.depth ?? 'full') as ReviewDepth)
+      return runReview(plan, runChild)
     },
     presentCall: args => ({
       card: 'generic',

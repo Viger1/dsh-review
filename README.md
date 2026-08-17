@@ -29,7 +29,9 @@ Requires a composed subagent provider (the stock `spawn` provider in `dsh-base` 
 
 ## Use
 
-One tool, `review`. Describe the target the way you would brief a colleague who has the repository but not the context:
+One tool, `review`. It is the most expensive thing in a session — every lens is an agent and every finding costs another — so it is a **pre-release audit, not a per-commit check**. A full run on a real change took minutes and a double-digit number of agents in our own use; budget for that, and use `depth: quick` when you want a cheap look at a small change.
+
+Describe the target the way you would brief a colleague who has the repository but not the context:
 
 ```
 Review the uncommitted changes in src/policy.ts and src/index.ts (run git diff).
@@ -40,7 +42,17 @@ per origin, and a grant must never leak to another session.
 
 The tool returns confirmed findings — file, line, what is wrong, the failure scenario, and a suggested fix — plus the titles of findings that were **refuted**, so you can see what the verification stage filtered out rather than wondering what it missed.
 
+```
+review { target: "...", depth: "quick" }
+```
+
+`quick` caps the run at two lenses, four verified findings, and one verifier — roughly a third of the cost. **Verification runs at both depths**: a cheaper review looks at less rather than trusting more, because reporting an unverified claim is the failure this plugin exists to avoid.
+
 The bundled `adversarial-review` skill teaches the agent when a review is worth its cost and how to act on the two categories differently.
+
+### What this has not been measured against
+
+The evidence here is that the method finds real defects — 49 confirmed across the sibling plugins, several reproduced by a verifier writing a script. What has **not** been measured is whether it beats simply asking the model to review the same diff: no A/B, no false-positive rate against a baseline. Treat the refutation stage as a design argument backed by observed refusals (14 findings dropped), not as a proven improvement over the obvious alternative.
 
 ## Configuration
 

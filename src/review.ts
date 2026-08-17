@@ -32,6 +32,35 @@ export type RunChild = (spec: {
   schema: unknown
 }) => Promise<unknown>
 
+/**
+ * How much a single review spends. `quick` narrows the panel and the budget
+ * for a routine check; `full` uses the deployment's configured settings.
+ *
+ * Verification is never skipped, at either depth: reporting an unverified
+ * claim is the failure mode this plugin exists to avoid, so a cheaper review
+ * looks at less rather than trusting more.
+ */
+export type ReviewDepth = 'quick' | 'full'
+
+/** Lenses and budget a `quick` review is capped to. */
+export const QUICK_LIMITS = { maxLenses: 2, maxFindings: 4, verifiersPerFinding: 1 } as const
+
+/**
+ * Apply a depth to a plan.
+ * @param plan - the plan built from deployment configuration.
+ * @param depth - the requested depth.
+ * @returns the plan to run.
+ */
+export function applyDepth(plan: ReviewPlan, depth: ReviewDepth): ReviewPlan {
+  if (depth === 'full') return plan
+  return {
+    ...plan,
+    lenses: plan.lenses.slice(0, QUICK_LIMITS.maxLenses),
+    maxFindings: Math.min(plan.maxFindings, QUICK_LIMITS.maxFindings),
+    verifiersPerFinding: Math.min(plan.verifiersPerFinding, QUICK_LIMITS.verifiersPerFinding),
+  }
+}
+
 /** What one review covers and how hard it looks. */
 export interface ReviewPlan {
   /** What the finders are told to review (a diff, a path, a description). */
